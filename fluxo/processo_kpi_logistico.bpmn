@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Definitions_DataLens_KPI"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler / Antigravity"
+                  exporterVersion="5.0.0">
+
+  <!-- ===================================================================== -->
+  <!-- COLLABORATION: POOLS & SWIMLANES                                      -->
+  <!-- ===================================================================== -->
+  <bpmn:collaboration id="Collaboration_DataLens">
+    <bpmn:participant id="Participant_Financeiro" name="Equipe Financeira / Origem dos Dados" processRef="Process_Financeiro" />
+    <bpmn:participant id="Participant_DataLens_Core" name="Ecossistema DataLens - KPIs Logísticos (LG DXi)" processRef="Process_DataLens_Core" />
+    <bpmn:participant id="Participant_Gestao_Logistica" name="Equipe de Gestão Logística (Operação &amp; Diretoria)" processRef="Process_Gestao_Logistica" />
+
+    <!-- Mensagens Inter-Pools -->
+    <bpmn:messageFlow id="Flow_Msg_Email" name="E-mail com relatórios .xlsx semanais" sourceRef="Task_Fin_EnviarEmail" targetRef="StartEvent_EmailRecebido" />
+    <bpmn:messageFlow id="Flow_Msg_Notificacao" name="Alerta de anomalia / atualização de KPIs" sourceRef="Task_API_ServirDados" targetRef="Task_Log_AcessarDashboard" />
+  </bpmn:collaboration>
+
+  <!-- ===================================================================== -->
+  <!-- PROCESSO 1: EQUIPE FINANCEIRA                                         -->
+  <!-- ===================================================================== -->
+  <bpmn:process id="Process_Financeiro" name="Processo Financeiro de Fechamento" isExecutable="false">
+    <bpmn:startEvent id="Start_Fin_Semanal" name="Início do Ciclo de Fechamento Semanal">
+      <bpmn:outgoing>Flow_Fin_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="Task_Fin_Consolidar" name="Consolidar Relatórios de Custos (GERP, ARUM, Incidentes)">
+      <bpmn:incoming>Flow_Fin_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Fin_2</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_Fin_GerarExcel" name="Gerar Planilhas de KPIs (.xlsx)">
+      <bpmn:incoming>Flow_Fin_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Fin_3</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sendTask id="Task_Fin_EnviarEmail" name="Enviar E-mail com Assunto Padronizado e Anexos">
+      <bpmn:incoming>Flow_Fin_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_Fin_4</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:endEvent id="End_Fin_Concluido" name="E-mail Transmitido">
+      <bpmn:incoming>Flow_Fin_4</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_Fin_1" sourceRef="Start_Fin_Semanal" targetRef="Task_Fin_Consolidar" />
+    <bpmn:sequenceFlow id="Flow_Fin_2" sourceRef="Task_Fin_Consolidar" targetRef="Task_Fin_GerarExcel" />
+    <bpmn:sequenceFlow id="Flow_Fin_3" sourceRef="Task_Fin_GerarExcel" targetRef="Task_Fin_EnviarEmail" />
+    <bpmn:sequenceFlow id="Flow_Fin_4" sourceRef="Task_Fin_EnviarEmail" targetRef="End_Fin_Concluido" />
+  </bpmn:process>
+
+  <!-- ===================================================================== -->
+  <!-- PROCESSO 2: CORE DATALENS (RPA + BACKEND API + STAGING)               -->
+  <!-- ===================================================================== -->
+  <bpmn:process id="Process_DataLens_Core" name="Processo Automatizado DataLens" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_Core">
+      <bpmn:lane id="Lane_RPA" name="Robô RPA (Python Worker)">
+        <bpmn:flowNodeRef>StartEvent_EmailRecebido</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>StartEvent_TimerCron</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_Trigger</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_ConectarIMAP</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_BuscarEmails</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_Deduplicar</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_IsDuplicado</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_ValidarPadrao</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_PadraoValido</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_RegistrarForaPadrao</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_BaixarAnexos</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_ExtrairKPIs</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_TemErrosParse</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RPA_RegistrarErroParse</bpmn:flowNodeRef>
+      </bpmn:lane>
+
+      <bpmn:lane id="Lane_DataStore" name="Camada de Persistência (PostgreSQL &amp; Staging Cache)">
+        <bpmn:flowNodeRef>Task_DB_PersistirPostgres</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_DB_Sucesso</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_DB_FallbackExcelCache</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_DB_RegistrarAuditLog</bpmn:flowNodeRef>
+      </bpmn:lane>
+
+      <bpmn:lane id="Lane_APIServer" name="Servidor API REST (Flask Server :5001)">
+        <bpmn:flowNodeRef>Task_API_CarregarBase</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_API_ExecutarAnalytics</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_API_ServirDados</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_PipelineSucesso</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_Ignorado</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <!-- Eventos Iniciais -->
+    <bpmn:startEvent id="StartEvent_EmailRecebido" name="E-mail Recebido no Exchange/Gmail">
+      <bpmn:outgoing>Flow_RPA_1a</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MsgDef_1" />
+    </bpmn:startEvent>
+
+    <bpmn:startEvent id="StartEvent_TimerCron" name="Gatilho Periódico (Cron / Schedule)">
+      <bpmn:outgoing>Flow_RPA_1b</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_1" />
+    </bpmn:startEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_Trigger" name="Gatilho de Disparo">
+      <bpmn:incoming>Flow_RPA_1a</bpmn:incoming>
+      <bpmn:incoming>Flow_RPA_1b</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_2</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- Bloco RPA -->
+    <bpmn:serviceTask id="Task_RPA_ConectarIMAP" name="Conectar ao Servidor IMAP (SSL Port 993)">
+      <bpmn:incoming>Flow_RPA_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_RPA_BuscarEmails" name="Buscar E-mails por Critérios (Subject, From, Date)">
+      <bpmn:incoming>Flow_RPA_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_4</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_RPA_Deduplicar" name="Calcular Fingerprint SHA-256 e Checar Idempotência">
+      <bpmn:incoming>Flow_RPA_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_5</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="Gateway_IsDuplicado" name="Mensagem já processada?">
+      <bpmn:incoming>Flow_RPA_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_Dup_Sim</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RPA_Dup_Nao</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_RPA_ValidarPadrao" name="Validar Assunto, Remetente e Intervalo de Datas">
+      <bpmn:incoming>Flow_RPA_Dup_Nao</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_6</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="Gateway_PadraoValido" name="E-mail está dentro do padrão?">
+      <bpmn:incoming>Flow_RPA_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_Padrao_Sim</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RPA_Padrao_Nao</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_RPA_RegistrarForaPadrao" name="Registrar Status FORA_DO_PADRAO no Repositório">
+      <bpmn:incoming>Flow_RPA_Padrao_Nao</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_Fim_Invalido</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_RPA_BaixarAnexos" name="Salvar Anexos .xlsx em Diretório Isolado por Hash">
+      <bpmn:incoming>Flow_RPA_Padrao_Sim</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_RPA_ExtrairKPIs" name="KpiExtractor: Parse das Abas (Logistic Cost, Air Freight, etc.)">
+      <bpmn:incoming>Flow_RPA_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_8</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="Gateway_TemErrosParse" name="Estrutura de colunas válida?">
+      <bpmn:incoming>Flow_RPA_8</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_Parse_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RPA_Parse_Erro</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_RPA_RegistrarErroParse" name="Registrar Log de Inconsistência de Schema">
+      <bpmn:incoming>Flow_RPA_Parse_Erro</bpmn:incoming>
+      <bpmn:outgoing>Flow_RPA_Fim_ErroParse</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Bloco Persistência -->
+    <bpmn:serviceTask id="Task_DB_PersistirPostgres" name="Upsert das Métricas no Banco PostgreSQL">
+      <bpmn:incoming>Flow_RPA_Parse_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_DB_1</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="Gateway_DB_Sucesso" name="PostgreSQL Acessível?">
+      <bpmn:incoming>Flow_DB_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_DB_Postgres_OK</bpmn:outgoing>
+      <bpmn:outgoing>Flow_DB_Postgres_Falha</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_DB_FallbackExcelCache" name="Salvar / Atualizar Cache Local dados_dashboard.xlsx">
+      <bpmn:incoming>Flow_DB_Postgres_Falha</bpmn:incoming>
+      <bpmn:incoming>Flow_DB_Postgres_OK</bpmn:incoming>
+      <bpmn:outgoing>Flow_DB_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_DB_RegistrarAuditLog" name="Gravar Histórico de Execução (EmailRecord / PROCESSADO)">
+      <bpmn:incoming>Flow_DB_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_DB_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Bloco API Server -->
+    <bpmn:serviceTask id="Task_API_CarregarBase" name="Carregar Dados Sanitizados (Endpoint /api/dashboard)">
+      <bpmn:incoming>Flow_DB_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_API_1</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:businessRuleTask id="Task_API_ExecutarAnalytics" name="Executar Analytics Engine: Cálculos YoY, Atingimento e Detecção de Anomalias (>2σ)">
+      <bpmn:incoming>Flow_API_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_API_2</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+
+    <bpmn:serviceTask id="Task_API_ServirDados" name="Entregar JSON Estruturado para o Dashboard">
+      <bpmn:incoming>Flow_API_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_API_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_PipelineSucesso" name="Base de KPIs Atualizada e Pronta para Visualização">
+      <bpmn:incoming>Flow_API_3</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="EndEvent_Ignorado" name="Ciclo Finalizado com Registro de Auditoria">
+      <bpmn:incoming>Flow_RPA_Dup_Sim</bpmn:incoming>
+      <bpmn:incoming>Flow_RPA_Fim_Invalido</bpmn:incoming>
+      <bpmn:incoming>Flow_RPA_Fim_ErroParse</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Sequence Flows Core -->
+    <bpmn:sequenceFlow id="Flow_RPA_1a" sourceRef="StartEvent_EmailRecebido" targetRef="Gateway_Trigger" />
+    <bpmn:sequenceFlow id="Flow_RPA_1b" sourceRef="StartEvent_TimerCron" targetRef="Gateway_Trigger" />
+    <bpmn:sequenceFlow id="Flow_RPA_2" sourceRef="Gateway_Trigger" targetRef="Task_RPA_ConectarIMAP" />
+    <bpmn:sequenceFlow id="Flow_RPA_3" sourceRef="Task_RPA_ConectarIMAP" targetRef="Task_RPA_BuscarEmails" />
+    <bpmn:sequenceFlow id="Flow_RPA_4" sourceRef="Task_RPA_BuscarEmails" targetRef="Task_RPA_Deduplicar" />
+    <bpmn:sequenceFlow id="Flow_RPA_5" sourceRef="Task_RPA_Deduplicar" targetRef="Gateway_IsDuplicado" />
+    <bpmn:sequenceFlow id="Flow_RPA_Dup_Sim" name="Sim (Duplicado)" sourceRef="Gateway_IsDuplicado" targetRef="EndEvent_Ignorado" />
+    <bpmn:sequenceFlow id="Flow_RPA_Dup_Nao" name="Não (Novo)" sourceRef="Gateway_IsDuplicado" targetRef="Task_RPA_ValidarPadrao" />
+    <bpmn:sequenceFlow id="Flow_RPA_6" sourceRef="Task_RPA_ValidarPadrao" targetRef="Gateway_PadraoValido" />
+    <bpmn:sequenceFlow id="Flow_RPA_Padrao_Sim" name="Válido" sourceRef="Gateway_PadraoValido" targetRef="Task_RPA_BaixarAnexos" />
+    <bpmn:sequenceFlow id="Flow_RPA_Padrao_Nao" name="Inválido" sourceRef="Gateway_PadraoValido" targetRef="Task_RPA_RegistrarForaPadrao" />
+    <bpmn:sequenceFlow id="Flow_RPA_Fim_Invalido" sourceRef="Task_RPA_RegistrarForaPadrao" targetRef="EndEvent_Ignorado" />
+    <bpmn:sequenceFlow id="Flow_RPA_7" sourceRef="Task_RPA_BaixarAnexos" targetRef="Task_RPA_ExtrairKPIs" />
+    <bpmn:sequenceFlow id="Flow_RPA_8" sourceRef="Task_RPA_ExtrairKPIs" targetRef="Gateway_TemErrosParse" />
+    <bpmn:sequenceFlow id="Flow_RPA_Parse_OK" name="OK" sourceRef="Gateway_TemErrosParse" targetRef="Task_DB_PersistirPostgres" />
+    <bpmn:sequenceFlow id="Flow_RPA_Parse_Erro" name="Erro" sourceRef="Gateway_TemErrosParse" targetRef="Task_RPA_RegistrarErroParse" />
+    <bpmn:sequenceFlow id="Flow_RPA_Fim_ErroParse" sourceRef="Task_RPA_RegistrarErroParse" targetRef="EndEvent_Ignorado" />
+
+    <bpmn:sequenceFlow id="Flow_DB_1" sourceRef="Task_DB_PersistirPostgres" targetRef="Gateway_DB_Sucesso" />
+    <bpmn:sequenceFlow id="Flow_DB_Postgres_OK" name="Sucesso" sourceRef="Gateway_DB_Sucesso" targetRef="Task_DB_FallbackExcelCache" />
+    <bpmn:sequenceFlow id="Flow_DB_Postgres_Falha" name="Falha / Offline" sourceRef="Gateway_DB_Sucesso" targetRef="Task_DB_FallbackExcelCache" />
+    <bpmn:sequenceFlow id="Flow_DB_2" sourceRef="Task_DB_FallbackExcelCache" targetRef="Task_DB_RegistrarAuditLog" />
+    <bpmn:sequenceFlow id="Flow_DB_3" sourceRef="Task_DB_RegistrarAuditLog" targetRef="Task_API_CarregarBase" />
+
+    <bpmn:sequenceFlow id="Flow_API_1" sourceRef="Task_API_CarregarBase" targetRef="Task_API_ExecutarAnalytics" />
+    <bpmn:sequenceFlow id="Flow_API_2" sourceRef="Task_API_ExecutarAnalytics" targetRef="Task_API_ServirDados" />
+    <bpmn:sequenceFlow id="Flow_API_3" sourceRef="Task_API_ServirDados" targetRef="EndEvent_PipelineSucesso" />
+  </bpmn:process>
+
+  <!-- ===================================================================== -->
+  <!-- PROCESSO 3: EQUIPE DE GESTÃO LOGÍSTICA (WAR ROOM & TOMADA DE DECISÃO) -->
+  <!-- ===================================================================== -->
+  <bpmn:process id="Process_Gestao_Logistica" name="Processo de Gestão e Tomada de Decisão" isExecutable="false">
+    <bpmn:startEvent id="Start_Log_Sessao" name="Reunião de Fechamento / War Room">
+      <bpmn:outgoing>Flow_Log_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_Log_AcessarDashboard" name="Acessar Dashboard DataLens (React / Power BI)">
+      <bpmn:incoming>Flow_Log_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_Log_FiltrarPeriodos" name="Aplicar Filtros Temporais (Mês, Trimestre, Semestre, YoY 2025 vs 2026)">
+      <bpmn:incoming>Flow_Log_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_Log_AnalisarDesvios" name="Avaliar Indicadores e Alertas de Anomalias (>2σ / Queda de Atingimento)">
+      <bpmn:incoming>Flow_Log_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_RequerAcao" name="Identificada Anomalia ou Meta Não Cumprida?">
+      <bpmn:incoming>Flow_Log_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_Acao_Sim</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Log_Acao_Nao</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Task_Log_CriarPlanoAcao" name="Cadastrar Plano de Ação 5W2H no Módulo ActionPlan">
+      <bpmn:incoming>Flow_Log_Acao_Sim</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_5</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_Log_AnexarEvidencias" name="Anexar Evidências de Justificativa (Demurrage, Fatura Extra)">
+      <bpmn:incoming>Flow_Log_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_Log_6</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_Log_ConcluidoComAcao" name="Plano de Ação Registrado e War Room Encerrado">
+      <bpmn:incoming>Flow_Log_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Log_ConcluidoSemAcao" name="Operação Normal - War Room Encerrado">
+      <bpmn:incoming>Flow_Log_Acao_Nao</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_Log_1" sourceRef="Start_Log_Sessao" targetRef="Task_Log_AcessarDashboard" />
+    <bpmn:sequenceFlow id="Flow_Log_2" sourceRef="Task_Log_AcessarDashboard" targetRef="Task_Log_FiltrarPeriodos" />
+    <bpmn:sequenceFlow id="Flow_Log_3" sourceRef="Task_Log_FiltrarPeriodos" targetRef="Task_Log_AnalisarDesvios" />
+    <bpmn:sequenceFlow id="Flow_Log_4" sourceRef="Task_Log_AnalisarDesvios" targetRef="Gateway_RequerAcao" />
+    <bpmn:sequenceFlow id="Flow_Log_Acao_Sim" name="Sim" sourceRef="Gateway_RequerAcao" targetRef="Task_Log_CriarPlanoAcao" />
+    <bpmn:sequenceFlow id="Flow_Log_Acao_Nao" name="Não" sourceRef="Gateway_RequerAcao" targetRef="End_Log_ConcluidoSemAcao" />
+    <bpmn:sequenceFlow id="Flow_Log_5" sourceRef="Task_Log_CriarPlanoAcao" targetRef="Task_Log_AnexarEvidencias" />
+    <bpmn:sequenceFlow id="Flow_Log_6" sourceRef="Task_Log_AnexarEvidencias" targetRef="End_Log_ConcluidoComAcao" />
+  </bpmn:process>
+
+  <!-- ===================================================================== -->
+  <!-- DIAGRAMA VISUAL (DI)                                                  -->
+  <!-- ===================================================================== -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_DataLens">
+      <!-- Pool Financeiro -->
+      <bpmndi:BPMNShape id="Shape_Participant_Financeiro" bpmnElement="Participant_Financeiro" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="1380" height="160" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start_Fin_Semanal" bpmnElement="Start_Fin_Semanal">
+        <dc:Bounds x="222" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Fin_Consolidar" bpmnElement="Task_Fin_Consolidar">
+        <dc:Bounds x="310" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Fin_GerarExcel" bpmnElement="Task_Fin_GerarExcel">
+        <dc:Bounds x="470" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Fin_EnviarEmail" bpmnElement="Task_Fin_EnviarEmail">
+        <dc:Bounds x="630" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End_Fin_Concluido" bpmnElement="End_Fin_Concluido">
+        <dc:Bounds x="792" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <!-- Pool Core DataLens -->
+      <bpmndi:BPMNShape id="Shape_Participant_DataLens_Core" bpmnElement="Participant_DataLens_Core" isHorizontal="true">
+        <dc:Bounds x="160" y="280" width="1380" height="520" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Lane_RPA" bpmnElement="Lane_RPA" isHorizontal="true">
+        <dc:Bounds x="190" y="280" width="1350" height="180" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Lane_DataStore" bpmnElement="Lane_DataStore" isHorizontal="true">
+        <dc:Bounds x="190" y="460" width="1350" height="170" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Lane_APIServer" bpmnElement="Lane_APIServer" isHorizontal="true">
+        <dc:Bounds x="190" y="630" width="1350" height="170" />
+      </bpmndi:BPMNShape>
+
+      <!-- Pool Gestão Logística -->
+      <bpmndi:BPMNShape id="Shape_Participant_Gestao_Logistica" bpmnElement="Participant_Gestao_Logistica" isHorizontal="true">
+        <dc:Bounds x="160" y="840" width="1380" height="180" />
+      </bpmndi:BPMNShape>
+
+      <!-- Conexões de Mensagem -->
+      <bpmndi:BPMNEdge id="Edge_Msg_Email" bpmnElement="Flow_Msg_Email">
+        <di:waypoint x="690" y="200" />
+        <di:waypoint x="690" y="322" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
