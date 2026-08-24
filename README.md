@@ -1,4 +1,4 @@
-# Nome do processo: Geração e Análise de Relatórios Administrativos
+#Geração e Análise de Relatórios Administrativos
 
 **Equipe:** 04
 **Gestor:** Rui Oliveira
